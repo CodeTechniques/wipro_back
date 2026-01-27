@@ -1,0 +1,52 @@
+# ===============================
+# Python
+# ===============================
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.pyc
+
+# ===============================
+# Virtual Environment
+# ===============================
+venv/
+env/
+ENV/
+.venv/
+
+# ===============================
+# Django
+# ===============================
+*.log
+local_settings.py
+db.sqlite3
+db.sqlite3-journal
+media/
+staticfiles/
+
+# Migrations (keep __init__.py)
+**/migrations/*.py
+!**/migrations/__init__.py
+
+# ===============================
+# Environment variables
+# ===============================
+.env
+.env.*
+*.env
+
+# ===============================
+# OS / Editor
+# ===============================
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# ===============================
+# Build / Deploy
+# ===============================
+*.bak
+*.swp
+*.tmp
