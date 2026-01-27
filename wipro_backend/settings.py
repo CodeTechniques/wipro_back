@@ -22,11 +22,12 @@ SECRET_KEY = os.getenv("SECRET_KEY", "unsafe-secret-key-for-local-only")
 
 DEBUG = os.getenv("DEBUG", "True").lower() == "true"
 
-ALLOWED_HOSTS = os.getenv(
-    "ALLOWED_HOSTS",
-    "127.0.0.1,localhost"
-).split(",")
-
+# ALLOWED_HOSTS = os.getenv(
+#     "ALLOWED_HOSTS",
+#     "127.0.0.1,localhost",
+#     "54.146.217.45"
+# ).split(",")
+ALLOWED_HOSTS = ["*"]
 # --------------------------------------------------
 # APPLICATIONS
 # --------------------------------------------------
