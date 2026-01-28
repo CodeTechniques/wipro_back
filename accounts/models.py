@@ -32,11 +32,17 @@ class UserVerification(models.Model):
         blank=True,
         null=True
     )
+    aadhar_back_photo = models.ImageField(
+        "aadhar_back",
+        blank=True,
+        null=True
+    )
     pan_card_photo = models.ImageField(
         upload_to="verification/pan_card/",
         blank=True,
         null=True
     )
+
 
     # 🔗 Referral (keep blank for now)
     referred_by = models.ForeignKey(

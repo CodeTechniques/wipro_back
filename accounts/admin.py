@@ -62,6 +62,7 @@ class UserVerificationAdmin(admin.ModelAdmin):
         "updated_at",
 
         "aadhar_front_preview",
+        "aadhar_back_preview",
         "pan_card_preview",
         "passport_photo_preview",
         "international_id_photo_preview",
@@ -82,6 +83,8 @@ class UserVerificationAdmin(admin.ModelAdmin):
                 "aadhar_number",
                 "aadhar_front_photo",
                 "aadhar_front_preview",
+                "aadhar_back_photo",
+                "aadhar_back_preview",
                 "pan_number",
                 "pan_card_photo",
                 "pan_card_preview",
@@ -129,6 +132,16 @@ class UserVerificationAdmin(admin.ModelAdmin):
                 obj.aadhar_front_photo.url
             )
         return "No Image"
+    
+    def aadhar_back_preview(self, obj):
+      if obj.aadhar_back_photo:
+        return format_html(
+            '<img src="{}" width="200" style="border-radius:6px;" />',
+            obj.aadhar_back_photo.url
+        )
+      return "No Image"
+
+    aadhar_back_preview.short_description = "Aadhaar Back Preview"
 
     def pan_card_preview(self, obj):
         if obj.pan_card_photo:
