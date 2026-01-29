@@ -14,36 +14,70 @@ from django.db import transaction as db_tx
 from .models import *
 from .serializers import *
 from .serializers import GroupPaymentInviteSerializer
-from wallet.services import credit_wallet
+from decimal import Decimal
+from wallet.calculations import calculate_net_balance_for_user
+from wallet.models import PaymentTransaction, Wallet
 
 
 
 class PropertyListCreateView(generics.ListCreateAPIView):
-    """List all properties or create a new property"""
-    # queryset = Property.objects.all()
+    queryset = Property.objects.all()
     queryset = Property.objects.filter(
-    status="available",
-    is_verified=True
-)
-
+        status="available",
+        is_verified=True
+    )
+    
+    
     permission_classes = [IsAuthenticatedOrReadOnly]
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_class = PropertyFilter
     search_fields = ['title', 'description', 'location', 'city']
     ordering_fields = ['price', 'area_sqft', 'created_at', 'views_count']
     ordering = ['-created_at']
-    
     def get_serializer_class(self):
         if self.request.method == 'POST':
             return PropertyCreateUpdateSerializer
         return PropertyListSerializer
-    
     def get_serializer_context(self):
        return {"request": self.request}
-
     
     def perform_create(self, serializer):
-        serializer.save(owner=self.request.user)
+        user = self.request.user
+        VERIFICATION_FEE = Decimal("1000.00")
+
+        # Default property state
+        is_verified = False
+        status = "draft"
+
+        # Ensure wallet exists
+        wallet, _ = Wallet.objects.get_or_create(user=user)
+
+        # ✅ CHECK DERIVED BALANCE
+        balance = calculate_net_balance_for_user(user) + wallet.bonus_balance
+        if balance >= VERIFICATION_FEE:
+            # 🔥 CREATE APPROVED INVESTMENT TRANSACTION
+            PaymentTransaction.objects.create(
+                user=user,
+                transaction_type="withdrawal",
+                amount=VERIFICATION_FEE,
+                status="approved",
+                wallet=wallet,
+                wallet_effect="debit",
+                admin_note="Property verification fee",
+                processed_at=timezone.now(),
+            )
+
+            is_verified = True
+            status = "draft"
+
+        # ✅ CREATE PROPERTY
+        serializer.save(
+            owner=user,
+            is_verified=is_verified,
+            status=status
+        )
+    
+
 
 class PropertyDetailView(generics.RetrieveUpdateDestroyAPIView):
     """Retrieve, update or delete a property"""

@@ -6,6 +6,8 @@ from .models import GroupPaymentInvite
 
 
 class PropertyImageSerializer(serializers.ModelSerializer):
+    image = serializers.SerializerMethodField()
+
     class Meta:
         model = PropertyImage
         fields = [
@@ -16,6 +18,14 @@ class PropertyImageSerializer(serializers.ModelSerializer):
             "created_at",
         ]
 
+    def get_image(self, obj):
+        request = self.context.get("request")
+        if obj.image:
+            if request:
+                return request.build_absolute_uri(obj.image.url)
+            return obj.image.url
+        return None
+
 
 class PropertyOwnerSerializer(serializers.ModelSerializer):
     class Meta:
@@ -24,6 +34,7 @@ class PropertyOwnerSerializer(serializers.ModelSerializer):
 
 class PropertyListSerializer(serializers.ModelSerializer):
     main_image = serializers.SerializerMethodField()
+    other_images = serializers.SerializerMethodField()
 
     class Meta:
         model = Property
@@ -35,16 +46,38 @@ class PropertyListSerializer(serializers.ModelSerializer):
             "location",
             "bedrooms",
             "bathrooms",
-            "status",          # ✅ ADD THIS
+            "status",
             "area_sqft",
             "property_type",
             "is_verified",
             "main_image",
+            "other_images",
         ]
 
     def get_main_image(self, obj):
-        img = obj.main_image
-        return img.url if img else None
+        request = self.context.get("request")
+
+        image = obj.images.filter(is_primary=True).first() \
+                or obj.images.first()
+
+        if image and image.image:
+            if request:
+                return request.build_absolute_uri(image.image.url)
+            return image.image.url
+        return None
+
+    def get_other_images(self, obj):
+        request = self.context.get("request")
+        images = obj.images.filter(is_primary=False)
+
+        urls = []
+        for img in images:
+            if request:
+                urls.append(request.build_absolute_uri(img.image.url))
+            else:
+                urls.append(img.image.url)
+
+        return urls
 
 class PropertyDetailSerializer(serializers.ModelSerializer):
     """Serializer for property detail view (complete data)"""
