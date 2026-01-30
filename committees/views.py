@@ -64,19 +64,23 @@ from django.db import transaction
 from .models import Committee, UserCommittee
 from django.contrib.auth.models import User
 from rest_framework_simplejwt.authentication import JWTAuthentication
+from decimal import Decimal
 
+from committees.models import Committee, UserCommittee
+from wallet.models import Wallet, PaymentTransaction
+from wallet.calculations import calculate_net_balance_for_user
 
 @csrf_exempt
 @require_POST
 def join_committee(request, committee_id):
-    # 🔐 MANUAL JWT AUTH (simple & explicit)
+    # 🔐 JWT AUTH
     jwt_authenticator = JWTAuthentication()
     auth_result = jwt_authenticator.authenticate(request)
 
     if auth_result is None:
         return JsonResponse({"error": "Authentication required"}, status=401)
 
-    user, token = auth_result
+    user, _ = auth_result
 
     try:
         with transaction.atomic():
@@ -84,13 +88,14 @@ def join_committee(request, committee_id):
                 id=committee_id,
                 is_active=True
             )
-
+            # ❌ Slot full
             if committee.filled_slots >= committee.total_slots:
                 return JsonResponse(
                     {"error": "No slots available"},
                     status=400
                 )
 
+            # ❌ Already joined
             if UserCommittee.objects.filter(
                 user=user,
                 committee=committee,
@@ -101,18 +106,62 @@ def join_committee(request, committee_id):
                     status=400
                 )
 
-            UserCommittee.objects.create(
-                user=user,
-                committee=committee
+            # ❌ No joining amount defined
+            if not committee.yearly_amount:
+                if not committee.monthly_amount:
+                    if not committee.daily_amount:
+                        return JsonResponse(
+                            {"error": "Committee joining amount not defined"},
+                            status=400
+                        )
+
+            # 🔹 WALLET CHECK (DERIVED BALANCE)
+            wallet, _ = Wallet.objects.get_or_create(user=user)
+            available_balance = (
+                calculate_net_balance_for_user(user)
+                + wallet.bonus_balance
             )
 
+            join_amount = Decimal(committee.daily_amount)
+
+            if available_balance < join_amount:
+                return JsonResponse(
+                    {
+                        "error": "Insufficient wallet balance",
+                        "required": float(join_amount),
+                        "available": float(available_balance),
+                    },
+                    status=400
+                )
+
+            # 🔥 DEDUCT MONEY (APPROVED INVESTMENT)
+            PaymentTransaction.objects.create(
+                user=user,
+                transaction_type="withdrawal",
+                amount=join_amount,
+                status="approved",
+                wallet=wallet,
+                wallet_effect="debit",
+                admin_note=f"Committee join fee: {committee.name}",
+                processed_at=timezone.now(),
+            )
+
+            # ✅ CREATE USER COMMITTEE
+            UserCommittee.objects.create(
+                user=user,
+                committee=committee,
+                total_invested=join_amount
+            )
+
+            # ✅ UPDATE SLOTS
             committee.filled_slots += 1
             committee.save(update_fields=["filled_slots"])
 
             return JsonResponse({
                 "success": True,
                 "message": "Successfully joined committee",
-                "committee_id": committee.id
+                "committee_id": committee.id,
+                "amount_deducted": float(join_amount),
             })
 
     except Committee.DoesNotExist:

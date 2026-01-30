@@ -703,7 +703,7 @@ class MyWalletView(APIView):
 
         # ensure wallet exists
         wallet, _ = Wallet.objects.get_or_create(user=user)
-
+            
         return Response({
             "total_invested": float(
                 calculate_total_investment_for_user(user)
