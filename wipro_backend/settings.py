@@ -32,8 +32,8 @@ ALLOWED_HOSTS = ["*"]
 # APPLICATIONS
 # --------------------------------------------------
 INSTALLED_APPS = [
-    'storages',
     'corsheaders',
+    'storages',
     'django.contrib.admin',
     'django.contrib.auth',
     'django.contrib.contenttypes',
@@ -61,8 +61,8 @@ INSTALLED_APPS = [
 # MIDDLEWARE
 # --------------------------------------------------
 MIDDLEWARE = [
-    'django.middleware.security.SecurityMiddleware',
     'corsheaders.middleware.CorsMiddleware',
+    'django.middleware.security.SecurityMiddleware',
     'whitenoise.middleware.WhiteNoiseMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
@@ -231,15 +231,26 @@ SIMPLE_JWT = {
 # --------------------------------------------------
 # CORS / CSRF
 # --------------------------------------------------
-CORS_ALLOWED_ORIGINS = [
-    "http://localhost:5173",
-    "https://wipogroup.in",
-]
 
 CORS_ALLOW_CREDENTIALS = True
 
+CORS_ALLOWED_ORIGINS = [
+    "https://www.wipogroup.in",
+    "https://wipogroup.in",
+]
+
+CORS_ALLOW_HEADERS = [
+    "authorization",
+    "content-type",
+    "accept",
+    "origin",
+    "user-agent",
+    "x-csrftoken",
+    "x-requested-with",
+]
 CSRF_TRUSTED_ORIGINS = [
     "https://wipogroup.in",
+    "https://www.wipogroup.in",
 ]
 
 # --------------------------------------------------
