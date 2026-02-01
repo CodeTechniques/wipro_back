@@ -237,6 +237,7 @@ CORS_ALLOW_CREDENTIALS = True
 CORS_ALLOWED_ORIGINS = [
     "https://www.wipogroup.in",
     "https://wipogroup.in",
+    "http://localhost:5173"
 ]
 
 CORS_ALLOW_HEADERS = [
@@ -251,6 +252,7 @@ CORS_ALLOW_HEADERS = [
 CSRF_TRUSTED_ORIGINS = [
     "https://wipogroup.in",
     "https://www.wipogroup.in",
+    "http://localhost:5173"
 ]
 
 # --------------------------------------------------

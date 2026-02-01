@@ -414,8 +414,8 @@ class PaymentRequestAdmin(admin.ModelAdmin):
                 "payment_screenshot_preview",
                 "user_payment_method_details",  # ✅ SHOWN
                 "status",
-                "earned",
-                "paid",
+                # "earned",
+                # "paid",
                 "admin_message",
             )
         }),
@@ -438,8 +438,8 @@ class PaymentRequestAdmin(admin.ModelAdmin):
 
     def approve_payment(self, request, queryset):
         queryset.filter(status="pending").update(
-            status="approved",
-            processed_at=timezone.now()
+        status="approved",
+        processed_at=timezone.now()
         )
     approve_payment.short_description = "Approve selected payment requests"
 

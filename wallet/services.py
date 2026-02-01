@@ -1,7 +1,12 @@
 from decimal import Decimal
 from django.db import transaction as db_tx, IntegrityError
 from .models import Wallet, WalletTransaction
+from django.db.models.signals import post_save
+from django.dispatch import receiver
+from django.utils import timezone
+from decimal import Decimal
 
+from wallet.models import PaymentRequest
 
 @db_tx.atomic
 def credit_wallet(
@@ -187,5 +192,36 @@ def sync_wallet_for_user(user):
     wallet.save(update_fields=["balance"])
 
 
+@receiver(post_save, sender=PaymentRequest)
+def auto_apply_payment_request(sender, instance, created, **kwargs):
+    """
+    Automatically apply earned / paid when admin approves a payment request
+    """
+
+    # ✅ Only when approved
+    if instance.status != "approved":
+        return
+
+    # ✅ Prevent double-application
+    if instance.processed_at is None:
+        instance.processed_at = timezone.now()
+
+    # 🔒 Idempotency guard
+    if instance.request_type == "deposit" and instance.earned:
+        return
+
+    if instance.request_type == "withdraw" and instance.paid:
+        return
+
+    # 🔥 APPLY LOGIC
+    if instance.request_type == "deposit":
+        instance.earned = Decimal(instance.amount)
+        instance.paid = Decimal("0")
+
+    elif instance.request_type == "withdraw":
+        instance.paid = Decimal(instance.amount)
+        instance.earned = Decimal("0")
+
+    instance.save(update_fields=["earned", "paid", "processed_at"])
 
 
