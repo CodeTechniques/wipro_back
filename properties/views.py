@@ -18,63 +18,67 @@ from decimal import Decimal
 from wallet.calculations import calculate_net_balance_for_user
 from wallet.models import PaymentTransaction, Wallet
 
+from wallet.services import debit_wallet
+from properties.models import Property
+from properties.serializers import (
+    PropertyListSerializer,
+    PropertyCreateUpdateSerializer,
+)
 
 
 class PropertyListCreateView(generics.ListCreateAPIView):
-    queryset = Property.objects.all()
-    queryset = Property.objects.filter(
-        status="available",
-        is_verified=True
-    )
-    
-    
     permission_classes = [IsAuthenticatedOrReadOnly]
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_class = PropertyFilter
-    search_fields = ['title', 'description', 'location', 'city']
-    ordering_fields = ['price', 'area_sqft', 'created_at', 'views_count']
-    ordering = ['-created_at']
+    search_fields = ["title", "description", "location", "city"]
+    ordering_fields = ["price", "area_sqft", "created_at", "views_count"]
+    ordering = ["-created_at"]
+
+    def get_queryset(self):
+        return Property.objects.filter(
+            status="available",
+            is_verified=True
+        )
+
     def get_serializer_class(self):
-        if self.request.method == 'POST':
+        if self.request.method == "POST":
             return PropertyCreateUpdateSerializer
         return PropertyListSerializer
+
     def get_serializer_context(self):
-       return {"request": self.request}
-    
+        return {"request": self.request}
+
     def perform_create(self, serializer):
         user = self.request.user
         VERIFICATION_FEE = Decimal("1000.00")
 
-        # Default property state
+        # Default values
         is_verified = False
         status = "draft"
 
         # Ensure wallet exists
         wallet, _ = Wallet.objects.get_or_create(user=user)
 
-        # ✅ CHECK DERIVED BALANCE
-        balance = calculate_net_balance_for_user(user) + wallet.bonus_balance
-        if balance >= VERIFICATION_FEE:
-            # 🔥 CREATE APPROVED INVESTMENT TRANSACTION
-            PaymentTransaction.objects.create(
-                user=user,
-                transaction_type="withdrawal",
-                amount=VERIFICATION_FEE,
-                status="approved",
+        # ✅ ONLY DB VALUE (NO CALCULATION)
+        available_balance = wallet.balance + wallet.bonus_balance
+
+        if available_balance >= VERIFICATION_FEE:
+            # 🔥 CUT MONEY FROM WALLET
+            debit_wallet(
                 wallet=wallet,
-                wallet_effect="debit",
-                admin_note="Property verification fee",
-                processed_at=timezone.now(),
+                amount=VERIFICATION_FEE,
+                tx_type="paid",              # 👈 IMPORTANT
+                source="property",
+                note="Property verification fee",
             )
 
             is_verified = True
-            status = "draft"
 
         # ✅ CREATE PROPERTY
         serializer.save(
             owner=user,
             is_verified=is_verified,
-            status=status
+            status=status,
         )
     
 

@@ -135,8 +135,6 @@ from wallet.models import PaymentTransaction, PaymentMethod
 @csrf_exempt
 @require_POST
 def create_payment_request(request):
-    from rest_framework_simplejwt.authentication import JWTAuthentication
-
     jwt_authenticator = JWTAuthentication()
     auth = jwt_authenticator.authenticate(request)
 
@@ -144,12 +142,11 @@ def create_payment_request(request):
         return JsonResponse({"error": "Unauthorized"}, status=401)
 
     user, _ = auth
-
     user_committee_id = request.POST.get("user_committee_id")
     payment_method_id = request.POST.get("payment_method_id")
     amount = request.POST.get("amount")  # ✅ FIX
     payment_screenshot = request.FILES.get("payment_screenshot")
-
+    
     if not payment_method_id:
         return JsonResponse({"error": "payment_method_id required"}, status=400)
 
@@ -184,17 +181,7 @@ def payment_status(request, pk):
         "amount": float(tx.amount or 0),
         "admin_note": tx.admin_note,
     })
-from django.http import JsonResponse
-from .models import PaymentTransaction
 
-def payment_status(request, pk):
-    tx = PaymentTransaction.objects.get(pk=pk, user=request.user)
-
-    return JsonResponse({
-        "status": tx.status,
-        "amount": float(tx.amount or 0),
-        "admin_note": tx.admin_note,
-    })
 
 
 
@@ -665,67 +652,99 @@ def wallet_payment_transactions(request):
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
 def wallet_summary(request):
-    payments = PaymentTransaction.objects.filter(
-        user=request.user,
-        status="approved"
+    wallet = request.user.wallet
+
+    qs = WalletTransaction.objects.filter(
+        wallet=wallet,
+        status="success"
     )
 
-    total_invested = sum(
-        p.amount for p in payments if p.transaction_type == "investment"
-    )
+    total_deposit = qs.filter(
+        tx_type="deposit"
+    ).aggregate(total=Sum("amount"))["total"] or 0
 
-    total_withdrawn = sum(
-        p.amount for p in payments if p.transaction_type == "withdrawal"
+    total_withdraw = abs(
+        qs.filter(
+            tx_type="withdraw"
+        ).aggregate(total=Sum("amount"))["total"] or 0
     )
-
-    balance = total_invested - total_withdrawn
 
     return Response({
-        "balance": float(balance),
-        "total_deposit": float(total_invested),
-        "total_withdraw": float(total_withdrawn),
+        "balance": float(wallet.balance),
+        "total_deposit": float(total_deposit),
+        "total_withdraw": float(total_withdraw),
     })
 
 
 
 
 
-
 from wallet.calculations import *
-from wallet.models import Wallet
+
+
+from rest_framework.views import APIView
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.response import Response
+from django.db.models import Sum
+
+from wallet.models import Wallet, WalletTransaction
 
 
 class MyWalletView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        user = request.user
+        wallet, _ = Wallet.objects.get_or_create(user=request.user)
 
-        # ensure wallet exists
-        wallet, _ = Wallet.objects.get_or_create(user=user)
-            
+        qs = WalletTransaction.objects.filter(
+            wallet=wallet,
+            status="success",
+        )
+
+        total_deposit = qs.filter(
+            tx_type="deposit"
+        ).aggregate(total=Sum("amount"))["total"] or 0
+
+        total_earned = qs.filter(
+            tx_type="earned"
+        ).aggregate(total=Sum("amount"))["total"] or 0
+
+        total_paid = abs(
+            qs.filter(
+                tx_type="paid"
+            ).aggregate(total=Sum("amount"))["total"] or 0
+        )
+
+        total_withdrawn = abs(
+            qs.filter(
+                tx_type="withdraw"
+            ).aggregate(total=Sum("amount"))["total"] or 0
+        )
+
+        total_invested = abs(
+            qs.filter(
+                tx_type="committee_investment"
+            ).aggregate(total=Sum("amount"))["total"] or 0
+        )
+
         return Response({
-            "total_invested": float(
-                calculate_total_investment_for_user(user)
-            ),
-            "total_withdrawn": float(
-                calculate_total_withdrawal_for_user(user)
-            ),
-            "total_earned": float(
-                calculate_total_earned_for_user(user)
-            ),
-            "total_paid": float(
-                calculate_total_paid_for_user(user)
-            ),
-            "net_balance": float(
-                calculate_net_balance_for_user(user)
-            ),
+            # 🔹 MONEY FLOW (DB STORED)
+            "total_deposit": float(total_deposit),
+            "total_earned": float(total_earned),
+            "total_paid": float(total_paid),
+            "total_withdrawn": float(total_withdrawn),
+            "total_invested": float(total_invested),
 
-            "bonus_balance": float(wallet.bonus_balance),  # 👈 NEW
-            
+            # 🔹 BALANCES
+            "balance": float(wallet.balance),
+            "bonus_balance": float(wallet.bonus_balance),
+            "available_balance": float(wallet.balance + wallet.bonus_balance),
+
+            # 🔹 META
             "status": wallet.status,
             "updated_at": wallet.updated_at.strftime("%Y-%m-%d %H:%M"),
         })
+
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -747,24 +766,6 @@ from wallet.models import Wallet, PaymentTransaction, PaymentMethod
 from committees.models import UserCommittee
 
 
-def get_available_balance(wallet):
-    """
-    Calculates REAL available balance from approved transactions
-    """
-    credited = PaymentTransaction.objects.filter(
-        wallet=wallet,
-        status="approved",
-        wallet_effect="credit"
-    ).aggregate(total=Sum("amount"))["total"] or Decimal("0")
-
-    debited = PaymentTransaction.objects.filter(
-        wallet=wallet,
-        status="approved",
-        wallet_effect="debit"
-    ).aggregate(total=Sum("amount"))["total"] or Decimal("0")
-
-    return credited - debited + wallet.bonus_balance
-
 
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
@@ -776,74 +777,107 @@ def withdraw_request(request):
     # ---------------------------
     try:
         amount = Decimal(request.data.get("amount"))
-    except:
+    except Exception:
         return Response({"error": "Invalid amount"}, status=400)
 
     if amount <= 0:
         return Response({"error": "Amount must be greater than zero"}, status=400)
 
-    method_id = request.data.get("payment_method_id")
+    # method_id = request.data.get("payment_method_id")
     withdrawal_details = request.data.get("withdrawal_details", "")
     user_committee_id = request.data.get("user_committee_id")
     payment_screenshot = request.FILES.get("payment_screenshot")
 
-    # ---------------------------
-    # 🔹 WALLET CHECK
-    # ---------------------------
-    try:
-        wallet = Wallet.objects.get(user=user)
-    except Wallet.DoesNotExist:
-        return Response({"error": "Wallet not found"}, status=404)
+    payment_method_type = request.data.get("user_payment_method")
 
-    available_balance = get_available_balance(wallet)
+    if not payment_method_type:
+        return Response(
+            {"error": "user_payment_method is required"},
+            status=400
+        )
 
-    # if available_balance < amount:
-    #     return Response(
-    #         {
-    #             "error": "Insufficient balance",
-    #             "available_balance": float(available_balance),
-    #         },
-    #         status=400,
-    #     )
-
-    # ---------------------------
-    # 🔹 PAYMENT METHOD CHECK
-    # ---------------------------
     try:
         payment_method = PaymentMethod.objects.get(
-            id=method_id,
+            method_type=payment_method_type,
             is_active=True,
             for_withdrawal=True
         )
     except PaymentMethod.DoesNotExist:
-        return Response({"error": "Invalid payment method"}, status=400)
+        return Response(
+            {"error": f"Payment method '{payment_method_type}' is not available for withdrawal"},
+            status=400
+        )
 
-    # ---------------------------
-    # 🔹 OPTIONAL COMMITTEE
-    # ---------------------------
-    user_committee = None
+    # ======================================================
+    # 🔥 COMMITTEE WITHDRAWAL (FIXED LOGIC)
+    # ======================================================
     if user_committee_id:
         try:
             user_committee = UserCommittee.objects.get(
                 id=user_committee_id,
-                user=user
+                user=user,
+                is_active=True
             )
         except UserCommittee.DoesNotExist:
             return Response({"error": "Invalid committee"}, status=400)
 
-    # ---------------------------
-    # 🔹 CREATE WITHDRAWAL REQUEST
-    # ---------------------------
+        # 🔒 CHECK COMMITTEE BALANCE (NOT WALLET)
+        if user_committee.total_invested < amount:
+            return Response(
+                {
+                    "error": "Insufficient committee balance",
+                    "available": float(user_committee.total_invested),
+                },
+                status=400,
+            )
+
+        # ❗ DO NOT TOUCH WALLET HERE
+        PaymentTransaction.objects.create(
+            user=user,
+            user_committee=user_committee,
+            transaction_type="withdrawal",
+            amount=amount,
+            payment_method=payment_method,
+            withdrawal_details=withdrawal_details,
+            payment_screenshot=payment_screenshot,
+            status="pending",
+            created_at=timezone.now(),
+        )
+
+        return Response(
+            {
+                "success": True,
+                "message": "Committee withdrawal request submitted. Awaiting admin approval.",
+                "amount": float(amount),
+                "source": "committee",
+            },
+            status=201,
+        )
+
+    # ======================================================
+    # 💳 WALLET WITHDRAWAL (UNCHANGED)
+    # ======================================================
+    wallet = Wallet.objects.get(user=user)
+    available_balance = wallet.balance + wallet.bonus_balance
+
+    if available_balance < amount:
+        return Response(
+            {
+                "error": "Insufficient wallet balance",
+                "available_balance": float(available_balance),
+            },
+            status=400,
+        )
+
     PaymentTransaction.objects.create(
         user=user,
-        user_committee=user_committee,
         transaction_type="withdrawal",
         amount=amount,
         payment_method=payment_method,
         withdrawal_details=withdrawal_details,
         wallet=wallet,
         wallet_effect="debit",
-        payment_screenshot=payment_screenshot,  # ✅ ADD THIS
+        payment_screenshot=payment_screenshot,
         status="pending",
         created_at=timezone.now(),
     )
@@ -851,8 +885,9 @@ def withdraw_request(request):
     return Response(
         {
             "success": True,
-            "message": "Withdrawal request submitted. Awaiting admin approval.",
+            "message": "Wallet withdrawal request submitted. Awaiting admin approval.",
             "amount": float(amount),
+            "source": "wallet",
         },
         status=201,
     )

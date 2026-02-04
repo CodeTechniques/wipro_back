@@ -1,89 +1,35 @@
 from django.contrib import admin
-
-# Register your models here.
-# properties/admin.py
-
-from django.contrib import admin
 from django.db.models import Count
 from .models import Property, PropertyImage
+import logging
+
+# properties/admin.py
+from django.utils.html import format_html
+
+# logger = logging.getLogger(__name__)
+class PropertyImageInline(admin.TabularInline):
+    model = PropertyImage
+    extra = 0
+
+    readonly_fields = ("image_preview", "created_at")  # ✅ FIX
+    fields = ("image", "image_preview", "caption", "is_primary", "created_at")
+
+    def image_preview(self, obj):
+        if obj.image:
+            return format_html(
+                '<img src="{}" style="height:120px;border-radius:6px;" />',
+                obj.image.url
+            )
+        return "-"
+
+    image_preview.short_description = "Preview"
 
 
-
-# @admin.register(Property)
-# class PropertyAdmin(admin.ModelAdmin):
-#     list_display = (
-#         "title",
-#         "owner",
-#         "property_type",
-#         "listing_type",
-#         "status",
-#         "price",
-#         "city",
-#         "is_verified",
-#         "created_at",
-#     )
-
-#     list_filter = (
-#         "status",
-#         "property_type",
-#         "listing_type",
-#         "city",
-#     )
-
-#     search_fields = (
-#         "title",
-#         "owner__username",
-#         "owner__email",
-#         "city",
-#         "location",
-#     )
-
-#     ordering = ("-created_at", "is_verified")
-
-#     list_filter = ("status", "is_verified")
-
-#     actions = ["mark_available"]
-
-#     readonly_fields = ("views_count", "created_at", "updated_at")
-
-#     fieldsets = (
-#         ("Basic Info", {
-#             "fields": ("title", "description", "owner")
-#         }),
-#         ("Property Details", {
-#             "fields": (
-#                 "property_type",
-#                 "listing_type",
-#                 "status",
-#                 "price",
-#                 "rent_price",
-#                 "area_sqft",
-#                 "bedrooms",
-#                 "bathrooms",
-#             )
-#         }),
-#         ("Location", {
-#             "fields": ("location", "address", "city", "state", "pincode")
-#         }),
-#         ("Stats", {
-#             "fields": ("views_count", "created_at", "updated_at")
-#         }),
-
-#     @admin.action(description="Mark selected properties as AVAILABLE")
-#         def mark_available(self, request, queryset):
-#         queryset.filter(
-#             status="draft",
-#             is_verified=True
-#         ).update(status="available")
-#     )
-
-
-from django.contrib import admin
-from .models import Property
 
 
 @admin.register(Property)
 class PropertyAdmin(admin.ModelAdmin):
+    inlines = [PropertyImageInline]
     list_display = (
         "title",
         "owner",
@@ -173,6 +119,8 @@ class PropertyAdmin(admin.ModelAdmin):
 
 from django.contrib.auth.admin import UserAdmin
 from django.contrib.auth.models import User
+
+
 
 class CustomUserAdmin(UserAdmin):
     list_display = (

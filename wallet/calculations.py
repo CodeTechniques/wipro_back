@@ -1,85 +1,98 @@
 from decimal import Decimal
 from django.db.models import Sum
-from wallet.models import *
+
+from wallet.models import (
+    Wallet,
+    WalletTransaction,
+    PaymentRequest,
+)
 
 
+# ======================================================
+# TOTAL INVESTMENT (ALL TIME)
+# ======================================================
 def calculate_total_investment_for_user(user):
     """
-    Calculates total investment from APPROVED payment transactions.
+    Total amount invested by user (committee + property etc.)
+    Derived from WalletTransaction.
     """
-
-    result = (
-        PaymentTransaction.objects
-        .filter(
-            user=user,
-            status="approved",
-            transaction_type="investment",
-            amount__isnull=False,
-        )
-        .aggregate(total=Sum("amount"))
+    total = (
+        WalletTransaction.objects.filter(
+            wallet=user.wallet,
+            tx_type__in=["committee_investment"],
+            status="success",
+        ).aggregate(total=Sum("amount"))["total"]
+        or Decimal("0.00")
     )
 
-    return result["total"] or Decimal("0.00")
+    # amount is stored negative for debit → return positive number
+    return abs(total)
 
 
-
-
-
-def calculate_net_balance_for_user(user):
-    from django.db.models import Sum
-    from wallet.models import PaymentTransaction
-
-    invested = (
-        PaymentTransaction.objects
-        .filter(user=user, status="approved", transaction_type="investment")
-        .aggregate(total=Sum("amount"))["total"] or 0
-    )
-
-    withdrawn = (
-        PaymentTransaction.objects
-        .filter(user=user, status="approved", transaction_type="withdrawal")
-        .aggregate(total=Sum("amount"))["total"] or 0
-    )
-
-    return invested - withdrawn
-
-
-
+# ======================================================
+# TOTAL WITHDRAWAL (ALL TIME)
+# ======================================================
 def calculate_total_withdrawal_for_user(user):
-    return (
-        PaymentTransaction.objects
-        .filter(
-            user=user,
-            status="approved",
-            transaction_type="withdrawal",
-            amount__isnull=False,
-        )
-        .aggregate(total=Sum("amount"))["total"]
+    """
+    Total withdrawn from wallet
+    """
+    total = (
+        WalletTransaction.objects.filter(
+            wallet=user.wallet,
+            tx_type="withdraw",
+            status="success",
+        ).aggregate(total=Sum("amount"))["total"]
         or Decimal("0.00")
     )
 
+    return abs(total)
 
+
+# ======================================================
+# TOTAL EARNED (ALL TIME)
+# ======================================================
 def calculate_total_earned_for_user(user):
-    return (
-        PaymentRequest.objects
-        .filter(user=user, status="approved")
-        .aggregate(total=Sum("earned"))["total"]
+    """
+    Total earned via deposits / interest
+    """
+    total = (
+        WalletTransaction.objects.filter(
+            wallet=user.wallet,
+            amount__gt=0,
+            status="success",
+        ).aggregate(total=Sum("amount"))["total"]
         or Decimal("0.00")
     )
 
+    return total
 
+
+# ======================================================
+# TOTAL PAID (ALL TIME)
+# ======================================================
 def calculate_total_paid_for_user(user):
-    return (
-        PaymentRequest.objects
-        .filter(user=user, status="approved")
-        .aggregate(total=Sum("paid"))["total"]
+    """
+    Total paid out (all debits)
+    """
+    total = (
+        WalletTransaction.objects.filter(
+            wallet=user.wallet,
+            amount__lt=0,
+            status="success",
+        ).aggregate(total=Sum("amount"))["total"]
         or Decimal("0.00")
     )
 
+    return abs(total)
 
+
+# ======================================================
+# NET BALANCE (SOURCE OF TRUTH)
+# ======================================================
 def calculate_net_balance_for_user(user):
-    invested = calculate_total_investment_for_user(user)
-    withdrawn = calculate_total_withdrawal_for_user(user)
-    earned = calculate_total_earned_for_user(user)
-    paid = calculate_total_paid_for_user(user)
-    return invested - withdrawn + earned - paid
+    """
+    FINAL NET BALANCE
+    (Do NOT recalculate from transactions anymore)
+    """
+    wallet, _ = Wallet.objects.get_or_create(user=user)
+    return wallet.balance

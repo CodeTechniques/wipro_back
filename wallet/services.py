@@ -1,154 +1,294 @@
 from decimal import Decimal
-from django.db import transaction as db_tx, IntegrityError
-from .models import Wallet, WalletTransaction
+from django.db import transaction
+from django.utils import timezone
 from django.db.models.signals import post_save
 from django.dispatch import receiver
-from django.utils import timezone
-from decimal import Decimal
 
-from wallet.models import PaymentRequest
+from .models import (
+    Wallet,
+    WalletTransaction,
+    PaymentRequest,
+    PaymentTransaction,
+    AdminWallet,
+    AdminWalletEntry,
+)
 
-@db_tx.atomic
+# =========================================================
+# CORE WALLET OPERATIONS (SINGLE SOURCE OF TRUTH)
+# =========================================================
+
+@transaction.atomic
 def credit_wallet(
     *,
     wallet: Wallet,
     amount: Decimal,
-    tx_type: str,
+    tx_type: str,   # deposit | earned
     source: str,
-    note: str = "",
     reference_id: str | None = None,
+    note: str = "",
 ):
     """
-    Credit wallet safely with idempotency.
+    CREDIT wallet (Deposit / Earned)
     """
-    # ✅ Idempotency check (code-level)
-    if WalletTransaction.objects.filter(
+    if amount <= 0:
+        raise ValueError("Credit amount must be positive")
+
+    # 🔒 Idempotency
+    if reference_id and WalletTransaction.objects.filter(
         wallet=wallet,
-        reference_id=reference_id,
         tx_type=tx_type,
+        reference_id=reference_id,
         status="success",
     ).exists():
-        return None  # already processed
-
-    try:
-        tx = WalletTransaction.objects.create(
-            wallet=wallet,
-            amount=amount,
-            tx_type=tx_type,
-            source=source,
-            status="success",
-            note=note,
-            reference_id=reference_id,
-        )
-
-        wallet.balance += amount
-        wallet.save(update_fields=["balance"])
-
-        return tx
-
-    except IntegrityError:
-        # ✅ DB-level idempotency fallback
         return None
 
+    tx = WalletTransaction.objects.create(
+        wallet=wallet,
+        amount=amount,
+        tx_type=tx_type,
+        source=source,
+        status="success",
+        reference_id=reference_id,
+        note=note,
+    )
 
-@db_tx.atomic
+    # 💰 BALANCE UPDATE
+    wallet.balance += amount
+
+    # 📊 AGGREGATES
+    if tx_type == "deposit":
+        wallet.total_deposit += amount
+    elif tx_type == "earned":
+        wallet.total_earned += amount
+
+    wallet.save()
+
+    return tx
+
+
+@transaction.atomic
 def debit_wallet(
     *,
     wallet: Wallet,
     amount: Decimal,
-    tx_type: str,
+    tx_type: str,   # withdraw | paid
     source: str,
-    note: str = "",
     reference_id: str | None = None,
+    note: str = "",
 ):
     """
-    Debit wallet safely with idempotency.
+    DEBIT wallet (Withdraw / Paid)
     """
+    if amount <= 0:
+        raise ValueError("Debit amount must be positive")
+
     if wallet.status != "active":
         raise ValueError("Wallet is frozen")
 
     if wallet.balance < amount:
         raise ValueError("Insufficient balance")
 
-    # ✅ Idempotency check
-    if WalletTransaction.objects.filter(
+    # 🔒 Idempotency
+    if reference_id and WalletTransaction.objects.filter(
         wallet=wallet,
-        reference_id=reference_id,
         tx_type=tx_type,
+        reference_id=reference_id,
         status="success",
     ).exists():
-        return None  # already processed
-
-    try:
-        tx = WalletTransaction.objects.create(
-            wallet=wallet,
-            amount=-amount,
-            tx_type=tx_type,
-            source=source,
-            status="success",
-            note=note,
-            reference_id=reference_id,
-        )
-
-        wallet.balance -= amount
-        wallet.save(update_fields=["balance"])
-
-        return tx
-
-    except IntegrityError:
         return None
 
+    tx = WalletTransaction.objects.create(
+        wallet=wallet,
+        amount=-amount,
+        tx_type=tx_type,
+        source=source,
+        status="success",
+        reference_id=reference_id,
+        note=note,
+    )
 
-from .models import *
+    # 💰 BALANCE UPDATE
+    wallet.balance -= amount
+
+    # 📊 AGGREGATES
+    if tx_type == "withdraw":
+        wallet.total_withdraw += amount
+    elif tx_type == "paid":
+        wallet.total_paid += amount
+
+    wallet.save()
+
+    return tx
 
 
-def approve_payment(self, request, queryset):
-    for tx in queryset.filter(status="pending"):
-        admin_wallet, _ = AdminWallet.objects.get_or_create(
-            user=tx.user
-        )
+# =========================================================
+# PAYMENT REQUEST → WALLET (ADMIN APPROVAL)
+# =========================================================
 
-        if AdminWalletEntry.objects.filter(
-            admin_wallet=admin_wallet,
-            payment=tx
-        ).exists():
-            continue  # already applied
+@receiver(post_save, sender=PaymentRequest)
+def apply_payment_request_to_wallet(sender, instance, **kwargs):
+    """
+    Handles:
+    - Deposit  → credit (deposit)
+    - Withdraw → debit  (withdraw)
+    """
 
-        if tx.transaction_type == "investment":
-            AdminWalletEntry.objects.create(
-                admin_wallet=admin_wallet,
-                payment=tx,
-                amount=tx.amount,
-                entry_type="credit"
+    if instance.status != "approved":
+        return
+
+    # 🔒 Prevent double apply
+    if instance.processed_at is not None:
+        return
+
+    wallet, _ = Wallet.objects.get_or_create(user=instance.user)
+
+    try:
+        if instance.request_type == "deposit":
+            credit_wallet(
+                wallet=wallet,
+                amount=Decimal(instance.amount),
+                tx_type="deposit",
+                source="payment",
+                reference_id=str(instance.id),  # ✅ STRING (FIXED)
+                note="Admin approved deposit",
             )
-            admin_wallet.total_credit += tx.amount
 
-        elif tx.transaction_type == "withdrawal":
-            AdminWalletEntry.objects.create(
-                admin_wallet=admin_wallet,
-                payment=tx,
-                amount=tx.amount,
-                entry_type="debit"
+            instance.earned = Decimal("0")
+            instance.paid = Decimal("0")
+
+        elif instance.request_type == "withdraw":
+            debit_wallet(
+                wallet=wallet,
+                amount=Decimal(instance.amount),
+                tx_type="withdraw",
+                source="payment",
+                reference_id=str(instance.id),  # ✅ STRING (FIXED)
+                note="Admin approved withdrawal",
             )
-            admin_wallet.total_debit += tx.amount
 
-        admin_wallet.recalc_balance()
+            instance.paid = Decimal("0")
+            instance.earned = Decimal("0")
 
-        tx.status = "approved"
-        tx.save()
+        instance.processed_at = timezone.now()
+        instance.save(update_fields=["earned", "paid", "processed_at"])
+
+    except Exception as e:
+        print("🔥 PAYMENT REQUEST SIGNAL ERROR:", e)
+        raise
 
 
+# =========================================================
+# COMMITTEE / PROPERTY / SYSTEM PAYMENTS
+# =========================================================
+
+def apply_payment_transaction_to_wallet(payment_tx: PaymentTransaction):
+    """
+    Handles ALL PaymentTransaction → Wallet sync
+
+    Supported flows:
+    - Legacy platform payments        → paid (debit)
+    - Committee investment (join/EMI) → committee_investment (debit)
+    - Committee withdrawal            → withdraw (credit)
+    """
+
+    # ---------------------------
+    # 🔒 SAFETY GUARDS
+    # ---------------------------
+    if payment_tx.status != "approved":
+        return
+
+    if payment_tx.wallet_synced:
+        return
+
+    if not payment_tx.amount or payment_tx.amount <= 0:
+        return
+
+    wallet = payment_tx.wallet or payment_tx.user.wallet
+
+    try:
+        with transaction.atomic():
+
+            # ==================================================
+            # 💸 COMMITTEE INVESTMENT (DEBIT)
+            # ==================================================
+            if (
+                payment_tx.transaction_type == "investment"
+                and payment_tx.user_committee
+            ):
+                debit_wallet(
+                    wallet=wallet,
+                    amount=Decimal(payment_tx.amount),
+                    tx_type="committee_investment",
+                    source="system",
+                    reference_id=str(payment_tx.id),
+                    note="Committee investment",
+                )
+
+                # Sync committee state
+                payment_tx.user_committee.total_invested += payment_tx.amount
+                payment_tx.user_committee.save(update_fields=["total_invested"])
+
+            # ==================================================
+            # 💰 COMMITTEE WITHDRAWAL (CREDIT)
+            # ==================================================
+            elif (
+                payment_tx.transaction_type == "withdrawal"
+                and payment_tx.user_committee
+            ):
+    # 💰 CREDIT WALLET (THIS IS THE WITHDRAW ENTRY)
+                credit_wallet(
+                    wallet=wallet,
+                    amount=Decimal(payment_tx.amount),
+                    tx_type="withdraw",          # 👈 THIS makes it a withdrawal in wallet
+                    source="system",
+                    reference_id=str(payment_tx.id),
+                    note="Committee withdrawal approved",
+                )
+
+                # 🔻 Reduce committee investment
+                payment_tx.user_committee.total_invested -= payment_tx.amount
+                payment_tx.user_committee.save(update_fields=["total_invested"])
+
+            # ==================================================
+            # 🏷️ LEGACY / PLATFORM PAYMENTS (DEFAULT)
+            # ==================================================
+            else:
+                debit_wallet(
+                    wallet=wallet,
+                    amount=Decimal(payment_tx.amount),
+                    tx_type="paid",
+                    source="system",
+                    reference_id=str(payment_tx.id),
+                    note="Platform usage payment",
+                )
+
+            # ==================================================
+            # ✅ MARK AS SYNCED
+            # ==================================================
+            payment_tx.wallet_synced = True
+            payment_tx.save(update_fields=["wallet_synced"])
+
+    except Exception as e:
+        print("🔥 PAYMENT TX WALLET ERROR:", e)
+        raise
 
 
-from django.db import transaction
-from decimal import Decimal
-from wallet.models import AdminWallet, AdminWalletEntry
+# =========================================================
+# ADMIN WALLET (ACCOUNTING ONLY – NO USER BALANCE)
+# =========================================================
 
-def apply_payment_to_admin_wallet(payment_tx):
+def apply_payment_to_admin_wallet(payment_tx: PaymentTransaction):
+    """
+    Admin accounting wallet
+    (Does NOT affect user wallet balance)
+    """
+
     if payment_tx.amount is None:
         return
 
-    admin_wallet, _ = AdminWallet.objects.get_or_create(user=payment_tx.user)
+    admin_wallet, _ = AdminWallet.objects.get_or_create(
+        user=payment_tx.user
+    )
 
     if AdminWalletEntry.objects.filter(
         admin_wallet=admin_wallet,
@@ -164,7 +304,6 @@ def apply_payment_to_admin_wallet(payment_tx):
         elif payment_tx.transaction_type == "withdrawal":
             admin_wallet.total_debit += payment_tx.amount
             entry_type = "debit"
-
         else:
             return
 
@@ -175,53 +314,6 @@ def apply_payment_to_admin_wallet(payment_tx):
             entry_type=entry_type,
         )
 
-        admin_wallet.balance = admin_wallet.total_credit - admin_wallet.total_debit
+        admin_wallet.recalc_balance()
         admin_wallet.last_synced_payment = payment_tx
-        admin_wallet.save()
-
-
-
-
-
-from wallet.calculations import calculate_net_balance_for_user
-from wallet.models import Wallet
-
-def sync_wallet_for_user(user):
-    wallet, _ = Wallet.objects.get_or_create(user=user)
-    wallet.balance = calculate_net_balance_for_user(user)
-    wallet.save(update_fields=["balance"])
-
-
-@receiver(post_save, sender=PaymentRequest)
-def auto_apply_payment_request(sender, instance, created, **kwargs):
-    """
-    Automatically apply earned / paid when admin approves a payment request
-    """
-
-    # ✅ Only when approved
-    if instance.status != "approved":
-        return
-
-    # ✅ Prevent double-application
-    if instance.processed_at is None:
-        instance.processed_at = timezone.now()
-
-    # 🔒 Idempotency guard
-    if instance.request_type == "deposit" and instance.earned:
-        return
-
-    if instance.request_type == "withdraw" and instance.paid:
-        return
-
-    # 🔥 APPLY LOGIC
-    if instance.request_type == "deposit":
-        instance.earned = Decimal(instance.amount)
-        instance.paid = Decimal("0")
-
-    elif instance.request_type == "withdraw":
-        instance.paid = Decimal(instance.amount)
-        instance.earned = Decimal("0")
-
-    instance.save(update_fields=["earned", "paid", "processed_at"])
-
-
+        admin_wallet.save(update_fields=["balance", "last_synced_payment"])
