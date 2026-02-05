@@ -19,4 +19,11 @@ urlpatterns = [
     path("referral-leaderboard/", referral_leaderboard, name="referral-leaderboard"),
     path("profile-details/", ProfileView.as_view(), name="profile-details"),
 
+
+
+    path("forgot-password/send-otp/", views.send_reset_otp,name="forget-password"),
+    path("forgot-password/verify-otp/",views.verify_reset_otp,name="varify-otp"),
+    path("forgot-password/reset/", views.reset_password,name="reset-password"),
+    path("contact-us/", views.contact_us,name="contact_us"),
+
 ]

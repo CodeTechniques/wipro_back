@@ -237,3 +237,214 @@ class ProfileView(RetrieveUpdateAPIView):
             user=self.request.user
         )
         return profile
+    
+
+from django.core.mail import send_mail
+from django.utils import timezone
+from .models import PasswordResetOTP
+from django.core.mail import EmailMultiAlternatives
+from django.template.loader import render_to_string
+
+@api_view(["POST"])
+@permission_classes([AllowAny])
+def send_reset_otp(request):
+    email = request.data.get("email")
+
+    if not email:
+        return Response({"error": "Email required"}, status=400)
+
+    try:
+        user = User.objects.get(email=email)
+    except User.DoesNotExist:
+        return Response({"error": "User with this email does not exist"}, status=404)
+
+    otp = PasswordResetOTP.generate_otp()
+
+    PasswordResetOTP.objects.create(
+        user=user,
+        email=email,
+        otp=otp
+    )
+
+    subject = "WepoGroup Password Reset OTP"
+
+    html_content = f"""
+<div style="font-family:Arial,Helvetica,sans-serif;background:#f5f6fa;padding:30px">
+  <div style="max-width:600px;margin:auto;background:#ffffff;border-radius:12px;padding:40px">
+
+    <h2 style="color:#111;">WepoGroup</h2>
+
+    <p style="font-size:16px;color:#333;">
+      Hello, {user.first_name} {user.last_name}
+    </p>
+
+    <p style="font-size:16px;color:#333;">
+      You requested to reset your password for your WepoGroup account.
+    </p>
+
+    <div style="
+        margin:30px 0;
+        text-align:center;
+        font-size:32px;
+        letter-spacing:8px;
+        font-weight:bold;
+        color:#2d7ef7;
+        background:#f1f5ff;
+        padding:20px;
+        border-radius:10px;
+    ">
+        {otp}
+    </div>
+
+    <p style="font-size:15px;color:#555;">
+      This OTP is valid for <b>10 minutes</b>.
+    </p>
+
+    <p style="font-size:15px;color:#999;">
+      If you didn’t request this, you can safely ignore this email.
+    </p>
+
+    <hr style="margin:30px 0;border:none;border-top:1px solid #eee"/>
+
+    <p style="font-size:13px;color:#aaa;">
+      © {timezone.now().year} WepoGroup. All rights reserved.
+        </p>
+    
+      </div>
+    </div>
+    """
+
+    msg = EmailMultiAlternatives(
+        subject,
+        f"Your OTP is {otp}",  # fallback text
+        None,
+        [email],
+    )
+
+    msg.attach_alternative(html_content, "text/html")
+    msg.send()
+
+    return Response({"message": "OTP sent to email"})
+
+
+
+@api_view(["POST"])
+@permission_classes([AllowAny])
+def verify_reset_otp(request):
+    email = request.data.get("email")
+    otp = request.data.get("otp")
+
+    try:
+        record = PasswordResetOTP.objects.filter(
+            email=email,
+            otp=otp,
+            is_verified=False
+        ).latest("created_at")
+    except PasswordResetOTP.DoesNotExist:
+        return Response({"error": "Invalid OTP"}, status=400)
+
+    if record.is_expired():
+        return Response({"error": "OTP expired"}, status=400)
+
+    record.is_verified = True
+    record.save()
+
+    return Response({"message": "OTP verified"})
+
+
+
+@api_view(["POST"])
+@permission_classes([AllowAny])
+def reset_password(request):
+    email = request.data.get("email")
+    new_password = request.data.get("new_password")
+
+    try:
+        record = PasswordResetOTP.objects.filter(
+            email=email,
+            is_verified=True
+        ).latest("created_at")
+    except PasswordResetOTP.DoesNotExist:
+        return Response({"error": "OTP not verified"}, status=400)
+
+    user = record.user
+    user.set_password(new_password)
+    user.save()
+
+    # cleanup
+    record.delete()
+
+    return Response({"message": "Password reset successful"})
+
+
+
+from django.core.mail import EmailMultiAlternatives
+@api_view(["POST"])
+@permission_classes([AllowAny])
+def contact_us(request):
+    full_name = request.data.get("full_name")
+    email = request.data.get("email")
+    message = request.data.get("message")
+
+    if not full_name or not email or not message:
+        return Response({"error": "All fields required"}, status=400)
+
+    company_email = "abhishek639398maurya@gmail.com"
+
+    subject = f"New Contact Message - {full_name}"
+
+    html_content = f"""
+    <div style="font-family:Arial,Helvetica,sans-serif;background:#f5f6fa;padding:30px">
+      <div style="max-width:650px;margin:auto;background:#ffffff;border-radius:12px;padding:40px">
+
+        <h2 style="color:#111;">WepoGroup</h2>
+
+        <p style="font-size:16px;color:#333;">
+          You received a new contact message from your website.
+        </p>
+
+        <div style="
+            background:#f8f9ff;
+            padding:20px;
+            border-radius:10px;
+            margin:20px 0;
+        ">
+            <p><b>Name:</b> {full_name}</p>
+            <p><b>Email:</b> {email}</p>
+        </div>
+
+        <div style="
+            background:#fafafa;
+            padding:20px;
+            border-radius:10px;
+            border:1px solid #eee;
+        ">
+            <p style="white-space:pre-line">{message}</p>
+        </div>
+
+        <hr style="margin:30px 0;border:none;border-top:1px solid #eee"/>
+
+        <p style="font-size:13px;color:#aaa;">
+          Sent from WepoGroup website contact form
+        </p>
+
+        <p style="font-size:12px;color:#aaa;">
+          {timezone.now().strftime("%d %b %Y %H:%M")}
+        </p>
+
+      </div>
+    </div>
+    """
+
+    msg = EmailMultiAlternatives(
+        subject,
+        message,
+        None,
+        [company_email],
+        reply_to=[email],  # so you can reply directly
+    )
+
+    msg.attach_alternative(html_content, "text/html")
+    msg.send()
+
+    return Response({"message": "Message sent successfully"})
