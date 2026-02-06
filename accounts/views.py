@@ -389,7 +389,7 @@ def contact_us(request):
     if not full_name or not email or not message:
         return Response({"error": "All fields required"}, status=400)
 
-    company_email = "abhishek639398maurya@gmail.com"
+    company_email = "wipogroupn@gmail.com"
 
     subject = f"New Contact Message - {full_name}"
 
