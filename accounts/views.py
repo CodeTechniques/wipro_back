@@ -266,20 +266,20 @@ def send_reset_otp(request):
         otp=otp
     )
 
-    subject = "WepoGroup Password Reset OTP"
+    subject = "WipoGroup Password Reset OTP"
 
     html_content = f"""
 <div style="font-family:Arial,Helvetica,sans-serif;background:#f5f6fa;padding:30px">
   <div style="max-width:600px;margin:auto;background:#ffffff;border-radius:12px;padding:40px">
 
-    <h2 style="color:#111;">WepoGroup</h2>
+    <h2 style="color:#111;">WipoGroup</h2>
 
     <p style="font-size:16px;color:#333;">
       Hello, {user.first_name} {user.last_name}
     </p>
 
     <p style="font-size:16px;color:#333;">
-      You requested to reset your password for your WepoGroup account.
+      You requested to reset your password for your WipoGroup account.
     </p>
 
     <div style="
@@ -307,7 +307,7 @@ def send_reset_otp(request):
     <hr style="margin:30px 0;border:none;border-top:1px solid #eee"/>
 
     <p style="font-size:13px;color:#aaa;">
-      © {timezone.now().year} WepoGroup. All rights reserved.
+      © {timezone.now().year} WipoGroup. All rights reserved.
         </p>
     
       </div>
@@ -397,7 +397,7 @@ def contact_us(request):
     <div style="font-family:Arial,Helvetica,sans-serif;background:#f5f6fa;padding:30px">
       <div style="max-width:650px;margin:auto;background:#ffffff;border-radius:12px;padding:40px">
 
-        <h2 style="color:#111;">WepoGroup</h2>
+        <h2 style="color:#111;">WipoGroup</h2>
 
         <p style="font-size:16px;color:#333;">
           You received a new contact message from your website.
@@ -425,7 +425,7 @@ def contact_us(request):
         <hr style="margin:30px 0;border:none;border-top:1px solid #eee"/>
 
         <p style="font-size:13px;color:#aaa;">
-          Sent from WepoGroup website contact form
+          Sent from WipoGroup website contact form
         </p>
 
         <p style="font-size:12px;color:#aaa;">
