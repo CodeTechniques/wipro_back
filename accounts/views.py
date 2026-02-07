@@ -135,6 +135,7 @@ def kyc_view(request):
         kyc = UserVerification.objects.filter(user=user).first()
         if not kyc:
             return Response({"exists": False})
+
         return Response({
             "exists": True,
             "status": kyc.status,
@@ -144,34 +145,30 @@ def kyc_view(request):
     if request.method == "POST":
         print("RAW DATA:", request.data)
         print("FILES:", request.FILES)
-        kyc, created = UserVerification.objects.get_or_create(user=user)
 
-        # 🔥 READ & REMOVE referral_code BEFORE serializer
-        referral_code = request.data.get("referral_code")
+        kyc = UserVerification.objects.filter(user=user).first()
 
-        # Make a mutable copy of data
-        data = request.data.copy()
-        data.pop("referral_code", None)
+        data = request.data   # 🔥 NO .copy()
 
-        # 🔹 Apply referral ONLY ONCE
-        if referral_code and not kyc.referred_by:
-            ref = UserReferral.objects.filter(
-                referral_code=referral_code
-            ).select_related("user").first()
+        # remove extra fields safely
+        if "kyc_type" in data:
+            data._mutable = True
+            data.pop("kyc_type")
 
-            if ref and ref.user != user:
-                kyc.referred_by = ref.user
-                kyc.save(update_fields=["referred_by"])
+        if "referral_code" in data:
+            data.pop("referral_code")
 
         serializer = UserVerificationSerializer(
-            kyc,
-            data=data,          # 👈 use cleaned data
+            instance=kyc,
+            data=data,
             partial=True
         )
+
         serializer.is_valid(raise_exception=True)
-        serializer.save(status="pending")
+        serializer.save(user=user, status="pending")
 
         return Response(serializer.data)
+
 
 
 from rest_framework.decorators import api_view, permission_classes

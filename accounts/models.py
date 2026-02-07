@@ -33,10 +33,10 @@ class UserVerification(models.Model):
         null=True
     )
     aadhar_back_photo = models.ImageField(
-        "aadhar_back",
-        blank=True,
-        null=True
-    )
+    upload_to="verification/aadhar_back/",
+    blank=True,
+    null=True
+)
     pan_card_photo = models.ImageField(
         upload_to="verification/pan_card/",
         blank=True,
