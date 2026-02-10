@@ -14,7 +14,6 @@ class NotificationAdmin(admin.ModelAdmin):
 from django.contrib import admin
 from .models import DueNotification
 
-@admin.register(DueNotification)
 class DueNotificationAdmin(admin.ModelAdmin):
     list_display = (
         "user",

@@ -144,19 +144,15 @@ def kyc_view(request):
 
     if request.method == "POST":
         print("RAW DATA:", request.data)
-        print("FILES:", request.FILES)
 
         kyc = UserVerification.objects.filter(user=user).first()
+        data = request.data.copy()
 
-        data = request.data   # 🔥 NO .copy()
+        referral_code = data.get("referral_code")
 
-        # remove extra fields safely
-        if "kyc_type" in data:
-            data._mutable = True
-            data.pop("kyc_type")
-
-        if "referral_code" in data:
-            data.pop("referral_code")
+        # remove fields not in serializer
+        data.pop("kyc_type", None)
+        data.pop("referral_code", None)
 
         serializer = UserVerificationSerializer(
             instance=kyc,
@@ -165,7 +161,22 @@ def kyc_view(request):
         )
 
         serializer.is_valid(raise_exception=True)
-        serializer.save(user=user, status="pending")
+
+        # 🔥 HANDLE REFERRAL
+        referred_user = None
+        if referral_code:
+            print(referral_code)
+            try:
+                ref_obj = UserReferral.objects.get(referral_code=referral_code)
+                referred_user = ref_obj.user
+            except UserReferral.DoesNotExist:
+                return Response({"error": "Invalid referral code"}, status=400)
+
+        serializer.save(
+            user=user,
+            status="pending",
+            referred_by=referred_user   # 🔥 SAVE HERE
+        )
 
         return Response(serializer.data)
 
