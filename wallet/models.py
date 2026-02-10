@@ -90,6 +90,9 @@ class PaymentMethod(models.Model):
         ("upi", "UPI"),
         ("bank", "Bank Transfer"),
         ("usdt", "USDT / Crypto"),
+        ("tcp", "TRC20"),
+        ("erc", "ERC20"),
+        ("bep", "BEP20")
     )
 
     name = models.CharField(max_length=100)
