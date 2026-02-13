@@ -242,7 +242,7 @@ DEFAULT_FROM_EMAIL = "WipoGroup<noreply@gmail.com>"
 # --------------------------------------------------
 
 CORS_ALLOW_CREDENTIALS = True
-
+GOLD_API_KEY="goldapi-10hdxsmlkosz8h-io"
 CORS_ALLOWED_ORIGINS = [
     "https://www.wipogroup.in",
     "https://wipogroup.in",

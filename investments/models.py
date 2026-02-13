@@ -38,3 +38,57 @@ class Investment(models.Model):
 
     def is_interest_unlocked(self):
         return now() >= self.interest_unlock_date
+
+
+
+from django.db import models
+from django.contrib.auth.models import User
+from decimal import Decimal
+from django.utils import timezone
+
+class GoldInvestment(models.Model):
+    user = models.ForeignKey(User, on_delete=models.CASCADE)
+    grams = models.DecimalField(max_digits=10, decimal_places=4)
+    buy_price_per_gram = models.DecimalField(max_digits=12, decimal_places=2)
+    total_invested = models.DecimalField(max_digits=12, decimal_places=2)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    is_active = models.BooleanField(default=True)
+
+    def current_value(self, current_price):
+        return self.grams * current_price
+
+    def __str__(self):
+        return f"{self.user.username} - {self.grams}g"
+
+class GoldPrice(models.Model):
+    price_per_gram = models.DecimalField(max_digits=12, decimal_places=2)
+    currency = models.CharField(max_length=10, default="INR")
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"{self.price_per_gram} {self.currency}"
+
+class BondInvestment(models.Model):
+    user = models.ForeignKey(User, on_delete=models.CASCADE)
+    amount = models.DecimalField(max_digits=12, decimal_places=2)
+    roi_percent = models.DecimalField(max_digits=5, decimal_places=2, default=8)
+    duration_months = models.IntegerField(default=12)
+
+    start_date = models.DateTimeField(auto_now_add=True)
+    maturity_date = models.DateTimeField()
+
+    is_active = models.BooleanField(default=True)
+
+    def save(self, *args, **kwargs):
+        if not self.maturity_date:
+            self.maturity_date = timezone.now() + timezone.timedelta(
+                days=self.duration_months * 30
+            )
+        super().save(*args, **kwargs)
+
+    def maturity_amount(self):
+        return self.amount + (self.amount * self.roi_percent / Decimal("100"))
+
+    def __str__(self):
+        return f"{self.user.username} - ₹{self.amount}"
