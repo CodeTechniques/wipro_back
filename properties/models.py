@@ -134,6 +134,20 @@ class PropertyImage(models.Model):
     
     def __str__(self):
         return f"Image for {self.property.title}"
+    
+
+class PropertyVideo(models.Model):
+    property = models.ForeignKey(
+        Property,
+        on_delete=models.CASCADE,
+        related_name="videos"
+    )
+
+    video = models.FileField(upload_to="properties/videos/")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"Video - {self.property.title}"
 
 class PropertyInquiry(models.Model):
     INQUIRY_TYPES = [

@@ -1,5 +1,5 @@
 from django.core.management.base import BaseCommand
-from committees.services import fetch_and_store_gold_price
+from investments.services import fetch_and_store_gold_price
 
 class Command(BaseCommand):
     help = "Fetch gold price from GoldAPI and store in DB"

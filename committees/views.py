@@ -70,12 +70,10 @@ from committees.models import Committee, UserCommittee
 from wallet.models import Wallet, PaymentTransaction
 from wallet.calculations import calculate_net_balance_for_user
 from wallet.services import debit_wallet
-@csrf_exempt
-@require_POST
+
 @csrf_exempt
 @require_POST
 def join_committee(request, committee_id):
-    # 🔐 JWT AUTH
     jwt_authenticator = JWTAuthentication()
     auth_result = jwt_authenticator.authenticate(request)
 
@@ -86,6 +84,7 @@ def join_committee(request, committee_id):
 
     try:
         with transaction.atomic():
+
             committee = Committee.objects.select_for_update().get(
                 id=committee_id,
                 is_active=True
@@ -110,7 +109,7 @@ def join_committee(request, committee_id):
                 )
 
             # ---------------------------------
-            # 💰 DETERMINE JOIN AMOUNT (FIXED)
+            # 💰 DETERMINE JOIN AMOUNT
             # ---------------------------------
             if committee.daily_amount:
                 join_amount = Decimal(committee.daily_amount)
@@ -128,9 +127,10 @@ def join_committee(request, committee_id):
                 )
 
             # ---------------------------------
-            # 🔹 WALLET CHECK
+            # 💰 WALLET CHECK
             # ---------------------------------
             wallet, _ = Wallet.objects.get_or_create(user=user)
+
             available_balance = (
                 calculate_net_balance_for_user(user)
                 + wallet.bonus_balance
@@ -147,7 +147,7 @@ def join_committee(request, committee_id):
                 )
 
             # ---------------------------------
-            # 🔥 DEDUCT MONEY (SOURCE OF TRUTH)
+            # 🔥 DEDUCT MONEY
             # ---------------------------------
             debit_wallet(
                 wallet=wallet,
@@ -161,14 +161,36 @@ def join_committee(request, committee_id):
             # ---------------------------------
             # ✅ CREATE USER COMMITTEE
             # ---------------------------------
-            UserCommittee.objects.create(
+            user_committee = UserCommittee.objects.create(
                 user=user,
                 committee=committee,
                 total_invested=join_amount
             )
 
             # ---------------------------------
-            # ✅ UPDATE SLOTS
+            # 🔥 AUTO ASSIGN PLAN
+            # ---------------------------------
+            from committees.models import CommitteePaymentPlan, UserCommitteePlan
+            from django.utils.timezone import now
+            from datetime import timedelta
+
+            committee_plan = CommitteePaymentPlan.objects.filter(
+                committee=committee,
+                is_active=True
+            ).select_related("plan").first()
+
+            if committee_plan:
+                plan = committee_plan.plan
+
+                UserCommitteePlan.objects.create(
+                    user_committee=user_committee,
+                    plan=plan,
+                    next_payment_due=now() + timedelta(days=plan.interval_days),
+                    is_active=True
+                )
+
+            # ---------------------------------
+            # UPDATE SLOT COUNT
             # ---------------------------------
             committee.filled_slots += 1
             committee.save(update_fields=["filled_slots"])
@@ -177,8 +199,10 @@ def join_committee(request, committee_id):
                 "success": True,
                 "message": "Successfully joined committee",
                 "committee_id": committee.id,
+                "user_committee_id": user_committee.id,
                 "amount_deducted": float(join_amount),
                 "plan_type": join_type,
+                "plan_auto_created": True if committee_plan else False,
             })
 
     except Committee.DoesNotExist:
@@ -187,6 +211,86 @@ def join_committee(request, committee_id):
             status=404
         )
 
+@api_view(["POST"])
+def pay_due(request, user_committee_id):
+
+    # 🔐 AUTH
+    jwt_authenticator = JWTAuthentication()
+    auth = jwt_authenticator.authenticate(request)
+    if not auth:
+        return JsonResponse({"error": "Unauthorized"}, status=401)
+
+    user, _ = auth
+
+    # 🔎 GET PLAN
+    try:
+        user_plan = UserCommitteePlan.objects.select_related(
+            "plan",
+            "user_committee",
+            "user_committee__committee"
+        ).get(
+            user_committee_id=user_committee_id,
+            user_committee__user=user,
+            is_active=True
+        )
+    except UserCommitteePlan.DoesNotExist:
+        return JsonResponse(
+            {"error": "No active plan found"},
+            status=404
+        )
+
+    # 🔴 CHECK IF DUE
+    if user_plan.next_payment_due > now():
+        return JsonResponse({
+            "error": "No due payment yet",
+            "next_due": user_plan.next_payment_due
+        }, status=400)
+
+    amount = Decimal(user_plan.plan.amount)
+
+    # 💰 WALLET CHECK
+    wallet, _ = Wallet.objects.get_or_create(user=user)
+
+    available_balance = (
+        calculate_net_balance_for_user(user)
+        + wallet.bonus_balance
+    )
+
+    if available_balance < amount:
+        return JsonResponse({
+            "error": "Insufficient wallet balance",
+            "required": float(amount),
+            "available": float(available_balance),
+        }, status=400)
+
+    # 🔥 DEDUCT MONEY
+    debit_wallet(
+        wallet=wallet,
+        amount=amount,
+        tx_type="committee_investment",
+        source="system",
+        reference_id=f"committee_due_{user_plan.id}",
+        note=f"Committee due payment"
+    )
+
+    # 🔁 UPDATE USER COMMITTEE TOTAL
+    uc = user_plan.user_committee
+    uc.total_invested += amount
+    uc.save(update_fields=["total_invested"])
+
+    # 🔁 UPDATE NEXT DUE DATE
+    user_plan.last_payment_at = now()
+    user_plan.next_payment_due = now() + timedelta(
+        days=user_plan.plan.interval_days
+    )
+    user_plan.save(update_fields=["last_payment_at", "next_payment_due"])
+
+    return JsonResponse({
+        "success": True,
+        "message": "Payment successful",
+        "amount_paid": float(amount),
+        "next_due": user_plan.next_payment_due,
+    })
 
 
 
@@ -458,4 +562,37 @@ def pending_payments(request, user_committee_id):
         "has_plan": True,
         "due": False,
         "next_due": plan.next_payment_due.strftime("%Y-%m-%d %H:%M"),
+    })
+
+
+@api_view(["GET"])
+def my_due_payments(request):
+    jwt_authenticator = JWTAuthentication()
+    auth = jwt_authenticator.authenticate(request)
+
+    if not auth:
+        return JsonResponse({"error": "Unauthorized"}, status=401)
+
+    user, _ = auth
+
+    plans = UserCommitteePlan.objects.filter(
+        user_committee__user=user,
+        is_active=True
+    )
+
+    due_list = []
+
+    for plan in plans:
+        if plan.next_payment_due <= now():
+            due_list.append({
+                "user_committee_id": plan.user_committee.id,
+                "committee_name": plan.user_committee.committee.name,
+                "amount": float(plan.plan.amount),
+                "plan_type": plan.plan.plan_type,
+                "due_at": plan.next_payment_due.strftime("%Y-%m-%d %H:%M"),
+            })
+
+    return JsonResponse({
+        "has_due": len(due_list) > 0,
+        "dues": due_list
     })

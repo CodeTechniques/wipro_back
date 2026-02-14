@@ -1,6 +1,6 @@
 from django.contrib import admin
 from django.db.models import Count
-from .models import Property, PropertyImage
+from .models import Property, PropertyImage, PropertyVideo
 import logging
 
 # properties/admin.py
@@ -24,12 +24,14 @@ class PropertyImageInline(admin.TabularInline):
 
     image_preview.short_description = "Preview"
 
-
+class PropertyVideoInline(admin.TabularInline):
+    model = PropertyVideo
+    extra = 0
 
 
 @admin.register(Property)
 class PropertyAdmin(admin.ModelAdmin):
-    inlines = [PropertyImageInline]
+    inlines = [PropertyImageInline, PropertyVideoInline]
     list_display = (
         "title",
         "owner",

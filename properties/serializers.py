@@ -25,6 +25,18 @@ class PropertyImageSerializer(serializers.ModelSerializer):
                 return request.build_absolute_uri(obj.image.url)
             return obj.image.url
         return None
+class PropertyVideoSerializer(serializers.ModelSerializer):
+    video = serializers.SerializerMethodField()
+
+    class Meta:
+        model = PropertyVideo
+        fields = ["id", "video", "created_at"]
+
+    def get_video(self, obj):
+        request = self.context.get("request")
+        if obj.video:
+            return request.build_absolute_uri(obj.video.url) if request else obj.video.url
+        return None
 
 
 class PropertyOwnerSerializer(serializers.ModelSerializer):
@@ -35,6 +47,7 @@ class PropertyOwnerSerializer(serializers.ModelSerializer):
 class PropertyListSerializer(serializers.ModelSerializer):
     main_image = serializers.SerializerMethodField()
     other_images = serializers.SerializerMethodField()
+    video = serializers.SerializerMethodField()
 
     class Meta:
         model = Property
@@ -52,18 +65,15 @@ class PropertyListSerializer(serializers.ModelSerializer):
             "is_verified",
             "main_image",
             "other_images",
+            "video",   # 👈 IMPORTANT
         ]
 
     def get_main_image(self, obj):
         request = self.context.get("request")
-
-        image = obj.images.filter(is_primary=True).first() \
-                or obj.images.first()
+        image = obj.images.filter(is_primary=True).first() or obj.images.first()
 
         if image and image.image:
-            if request:
-                return request.build_absolute_uri(image.image.url)
-            return image.image.url
+            return request.build_absolute_uri(image.image.url) if request else image.image.url
         return None
 
     def get_other_images(self, obj):
@@ -72,27 +82,57 @@ class PropertyListSerializer(serializers.ModelSerializer):
 
         urls = []
         for img in images:
-            if request:
-                urls.append(request.build_absolute_uri(img.image.url))
-            else:
-                urls.append(img.image.url)
+            urls.append(request.build_absolute_uri(img.image.url) if request else img.image.url)
 
         return urls
 
+    def get_video(self, obj):
+        request = self.context.get("request")
+        vid = obj.videos.first()
+
+        if not vid:
+            return None
+
+        return request.build_absolute_uri(vid.video.url) if request else vid.video.url
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+
+        # 🔥 remove video if None
+        if not data.get("video"):
+            data.pop("video", None)
+
+        return data
+
 class PropertyDetailSerializer(serializers.ModelSerializer):
-    """Serializer for property detail view (complete data)"""
     images = PropertyImageSerializer(many=True, read_only=True)
+    video = serializers.SerializerMethodField()
     owner = PropertyOwnerSerializer(read_only=True)
     price_per_sqft = serializers.ReadOnlyField()
     is_favorited = serializers.SerializerMethodField()
     inquiry_count = serializers.SerializerMethodField()
-
-    # ✅ NEW FIELD
     user_request_status = serializers.SerializerMethodField()
 
     class Meta:
         model = Property
-        fields = '__all__'  # this will auto-include user_request_status
+        fields = "__all__"
+
+    def get_video(self, obj):
+        request = self.context.get("request")
+        vid = obj.videos.first()
+
+        if not vid:
+            return None
+
+        return request.build_absolute_uri(vid.video.url) if request else vid.video.url
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+
+        if not data.get("video"):
+            data.pop("video", None)
+
+        return data
 
     def get_is_favorited(self, obj):
         request = self.context.get('request')
@@ -105,7 +145,6 @@ class PropertyDetailSerializer(serializers.ModelSerializer):
     def get_inquiry_count(self, obj):
         return obj.inquiries.count()
 
-    # ✅ NEW METHOD
     def get_user_request_status(self, obj):
         request = self.context.get('request')
         if not request or not request.user.is_authenticated:
@@ -118,18 +157,29 @@ class PropertyDetailSerializer(serializers.ModelSerializer):
 
         return pr.status if pr else None
 
+
 class PropertyCreateUpdateSerializer(serializers.ModelSerializer):
-    """Serializer for creating/updating properties"""
     images = PropertyImageSerializer(many=True, read_only=True)
-    
+
     class Meta:
         model = Property
         exclude = ['owner', 'views_count', 'created_at', 'updated_at']
-    
+
     def create(self, validated_data):
-        # Set the owner to the current user
-        validated_data['owner'] = self.context['request'].user
-        return super().create(validated_data)
+        request = self.context["request"]
+        video_file = request.FILES.get("video")
+
+        property_obj = super().create(validated_data)
+
+        if video_file:
+            PropertyVideo.objects.create(
+                property=property_obj,
+                video=video_file
+            )
+
+        return property_obj
+
+
 
 class PropertyInquirySerializer(serializers.ModelSerializer):
     inquirer = PropertyOwnerSerializer(read_only=True)

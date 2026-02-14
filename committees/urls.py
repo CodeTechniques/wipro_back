@@ -16,7 +16,12 @@ urlpatterns = [
     path("subscribe-plan/", subscribe_plan, name="subscribe-plan"),  # NEW
 
     path("pending-payments/<user_committee_id>/", pending_payments, name="pending-payments"),  # NEW
-
+    path("my-due-payments/", my_due_payments),
+    path(
+    "pay-due/<int:user_committee_id>/",
+    pay_due,
+    name="pay-due"
+),
 
 ]
 

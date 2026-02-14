@@ -163,7 +163,51 @@ class PropertyImageUploadView(generics.CreateAPIView):
             'message': f'{len(uploaded_images)} images uploaded successfully',
             'images': uploaded_images
         }, status=status.HTTP_201_CREATED)
+    
 
+class PropertyVideoUploadView(generics.CreateAPIView):
+    serializer_class = PropertyVideoSerializer
+    permission_classes = [IsAuthenticated]
+    parser_classes = [MultiPartParser, FormParser]
+
+    def post(self, request, property_id):
+        prop = get_object_or_404(Property, id=property_id)
+
+        if prop.owner != request.user:
+            raise PermissionDenied("Only owner can upload video")
+
+        videos = request.FILES.getlist("videos")
+
+        if not videos:
+            return Response({"error": "No videos provided"}, status=400)
+
+        created = []
+
+        for vid in videos:
+            obj = PropertyVideo.objects.create(
+                property=prop,
+                video=vid
+            )
+            created.append({
+                "id": obj.id,
+                "video": request.build_absolute_uri(obj.video.url)
+            })
+
+        return Response({
+            "message": f"{len(created)} videos uploaded",
+            "videos": created
+        }, status=201)
+
+
+class PropertyVideoDeleteView(generics.DestroyAPIView):
+    queryset = PropertyVideo.objects.all()
+    permission_classes = [IsAuthenticated]
+
+    def perform_destroy(self, instance):
+        if instance.property.owner != self.request.user:
+            raise PermissionDenied("Only owner can delete")
+        instance.delete()
+        
 class PropertyInquiryView(generics.CreateAPIView):
     """Create an inquiry for a property"""
     serializer_class = PropertyInquirySerializer

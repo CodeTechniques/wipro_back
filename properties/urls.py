@@ -30,7 +30,17 @@ path("plans/<uuid:plan_id>/invite-user/", SendGroupPaymentInviteView.as_view()),
     
     # Property Images
     path('<uuid:property_id>/images/', views.PropertyImageUploadView.as_view(), name='property-image-upload'),
-    
+    path(
+    "<uuid:property_id>/videos/upload/",
+    PropertyVideoUploadView.as_view(),
+    name="property-video-upload"
+),
+
+path(
+    "property-videos/<int:pk>/",
+    PropertyVideoDeleteView.as_view(),
+),
+
     # Inquiries
     path('<uuid:property_id>/inquire/', views.PropertyInquiryView.as_view(), name='property-inquire'),
     path('inquiries/sent/', views.MyInquiriesView.as_view(), name='my-inquiries'),

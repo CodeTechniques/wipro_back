@@ -251,4 +251,31 @@ class CommitteePaymentPlanAdmin(admin.ModelAdmin):
     interval_display.short_description = "Interval"
 
 
+from .models import PaymentPlan
 
+@admin.register(PaymentPlan)
+class PaymentPlanAdmin(admin.ModelAdmin):
+    list_display = (
+        "id",
+        "name",
+        "plan_type",
+        "amount",
+        "interval_days",
+        "is_active",
+    )
+
+    list_filter = ("plan_type", "is_active")
+
+    search_fields = ("name",)
+
+    fieldsets = (
+        ("Plan Info", {
+            "fields": (
+                "name",
+                "plan_type",
+                "amount",
+                "interval_days",
+                "is_active",
+            )
+        }),
+    )

@@ -8,7 +8,7 @@ class Command(BaseCommand):
     def handle(self, *args, **kwargs):
         plans = UserCommitteePlan.objects.filter(
             is_active=True,
-            next_due_at__lte=now()
+            next_payment_due__lte=now()
         )
 
         for up in plans:
@@ -20,5 +20,5 @@ class Command(BaseCommand):
                 status="pending"
             )
 
-            up.next_due_at = now() + timedelta(days=up.plan.interval)
+            up.next_payment_due = now() + timedelta(days=up.plan.interval_days)
             up.save()
